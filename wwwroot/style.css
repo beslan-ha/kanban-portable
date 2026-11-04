@@ -579,6 +579,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .info-row { display: flex; gap: 10px; align-items: baseline; }
 .info-row .k { color: var(--muted); min-width: 118px; flex: none; font-size: 12px; }
 .info-row .v { word-break: break-all; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.info-links { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; }
+.info-links a { color: var(--accent); text-decoration: none; }
+.info-links a:hover { text-decoration: underline; }
 .info h3 { margin: 6px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 .backup-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-family: "Cascadia Mono", Consolas, monospace; color: var(--muted); max-height: 150px; overflow: auto; }
 

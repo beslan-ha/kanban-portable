@@ -1,8 +1,12 @@
 # Kanban — портативная доска задач
 
+[Репозиторий](https://github.com/beslan-ha/kanban-portable) · [Релизы](https://github.com/beslan-ha/kanban-portable/releases) · [MIT](LICENSE)
+
 Отдельное приложение: один `Kanban.exe`, база `kanban.db` рядом с ним, интерфейс открывается в браузере.
 Ничего не устанавливает, не пишет в реестр, не требует интернета и прав администратора.
 Копируется вместе с папкой на флешку или другой ПК.
+
+![Доска Kanban](https://raw.githubusercontent.com/beslan-ha/kanban-portable/main/docs/board-dark.png)
 
 ## Быстрый старт
 
@@ -37,6 +41,16 @@
 - **Синхронизация через WebDAV** (Яндекс.Диск, Mail.ru, Nextcloud) — перенос изменений между ПК
   при запуске, при выходе и по кнопке; см. ниже.
 - **Обновление из папки** `updates\` — см. ниже.
+
+## Скриншоты
+
+| Карточка с чек-листом и подсказками тегов | Синхронизация через WebDAV |
+|---|---|
+| ![Карточка](https://raw.githubusercontent.com/beslan-ha/kanban-portable/main/docs/card-dialog-dark.png) | ![Синхронизация](https://raw.githubusercontent.com/beslan-ha/kanban-portable/main/docs/sync-dialog-dark.png) |
+
+Светлая тема:
+
+![Светлая тема](https://raw.githubusercontent.com/beslan-ha/kanban-portable/main/docs/board-light.png)
 
 ## Состав папки
 
@@ -154,7 +168,8 @@
 
 ## Обновление из папки `updates\`
 
-Интернет не нужен: новую версию приносит пользователь.
+Интернет не нужен: новую версию приносит пользователь. Готовые архивы новых версий публикуются
+в разделе [Релизы](https://github.com/beslan-ha/kanban-portable/releases).
 
 1. Создать рядом с `Kanban.exe` папку `updates`.
 2. Положить туда новый `Kanban.exe` (например, `Kanban-1.2.0.exe`).
@@ -282,3 +297,7 @@ pwsh -NoProfile -File .\build.ps1
 
 Только основная версия: `pwsh -NoProfile -File .\build.ps1 -FullOnly`.
 Иконка лежит в `assets\kanban.ico` и встраивается в `Kanban.exe`.
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 beslan-ha.

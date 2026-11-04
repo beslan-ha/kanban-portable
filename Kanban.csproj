@@ -9,7 +9,7 @@
     <AssemblyName>Kanban</AssemblyName>
     <RootNamespace>Kanban</RootNamespace>
     <ApplicationIcon>assets\kanban.ico</ApplicationIcon>
-    <Version>1.2.5</Version>
+    <Version>1.2.6</Version>
     <AssemblyTitle>Kanban — портативная доска задач</AssemblyTitle>
     <Product>Kanban</Product>
     <InvariantGlobalization>true</InvariantGlobalization>

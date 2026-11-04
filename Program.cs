@@ -17,7 +17,7 @@ namespace Kanban;
 
 internal static class Program
 {
-    public const string AppVersion = "1.2.5";
+    public const string AppVersion = "1.2.6";
 
     public static string AppDir { get; } = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     public static string LogPath { get; } = Path.Combine(AppContext.BaseDirectory, "kanban.log");

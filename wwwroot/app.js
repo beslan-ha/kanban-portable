@@ -1629,6 +1629,21 @@ async function showInfo() {
     row('Файлы вложений', `${info.filesCount} шт. (${formatSize(info.filesSize)})`);
     row('Папка обновлений', info.updateDir);
 
+    const links = document.createElement('div');
+    links.className = 'info-links';
+    for (const [label, href] of [
+      ['Репозиторий на GitHub', 'https://github.com/beslan-ha/kanban-portable'],
+      ['Релизы и обновления', 'https://github.com/beslan-ha/kanban-portable/releases'],
+    ]) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = label;
+      links.appendChild(a);
+    }
+    body.appendChild(links);
+
     const h = document.createElement('h3');
     h.textContent = 'Резервные копии';
     body.appendChild(h);

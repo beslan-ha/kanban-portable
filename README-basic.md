@@ -187,3 +187,8 @@ pwsh -NoProfile -File .\build.ps1
 ```
 
 Иконка лежит в `assets\kanban.ico` и встраивается в `Kanban.exe`.
+
+## Лицензия
+
+[MIT](https://github.com/beslan-ha/kanban-portable/blob/main/LICENSE) © 2026 beslan-ha.
+Исходники и новые версии: [github.com/beslan-ha/kanban-portable](https://github.com/beslan-ha/kanban-portable).
