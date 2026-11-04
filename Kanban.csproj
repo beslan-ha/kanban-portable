@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Kanban</AssemblyName>
+    <RootNamespace>Kanban</RootNamespace>
+    <ApplicationIcon>assets\kanban.ico</ApplicationIcon>
+    <Version>1.2.5</Version>
+    <AssemblyTitle>Kanban — портативная доска задач</AssemblyTitle>
+    <Product>Kanban</Product>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+  </ItemGroup>
+
+  <!-- Вариант «без синхронизации»: dotnet publish -p:NoSync=true -->
+  <PropertyGroup Condition="'$(NoSync)' == 'true'">
+    <DefineConstants>$(DefineConstants);NOSYNC</DefineConstants>
+    <AssemblyTitle>Kanban — портативная доска задач (без синхронизации)</AssemblyTitle>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(NoSync)' == 'true'">
+    <Compile Remove="Sync.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*" LogicalName="web/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Убираем нативные библиотеки WPF/IIS, которые рантайм кладёт «на всякий случай»:
+       приложению нужны только e_sqlite3.dll и vcruntime. -->
+  <Target Name="StripUnusedNativeAssets" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+        Condition="'%(ResolvedFileToPublish.Filename)' == 'D3DCompiler_47_cor3'
+                or '%(ResolvedFileToPublish.Filename)' == 'PenImc_cor3'
+                or '%(ResolvedFileToPublish.Filename)' == 'PresentationNative_cor3'
+                or '%(ResolvedFileToPublish.Filename)' == 'wpfgfx_cor3'
+                or '%(ResolvedFileToPublish.Filename)' == 'aspnetcorev2_inprocess'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

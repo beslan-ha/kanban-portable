@@ -1,0 +1,23 @@
+# Сборка
+bin/
+obj/
+obj-basic/
+dist/
+*.user
+
+# Рабочие данные приложения (создаются при запуске)
+kanban.db
+kanban.db-*
+kanban.log
+kanban.log.*
+runtime.json
+sync-state.json
+kanban.config.json
+backups/
+files/
+updates/
+
+# Разное
+*.tmp
+Thumbs.db
+desktop.ini

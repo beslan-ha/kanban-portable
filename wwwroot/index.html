@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Kanban — доска задач</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="4" y="6" width="6" height="18" rx="1.6" fill="var(--c1)"/>
+      <rect x="13" y="6" width="6" height="13" rx="1.6" fill="var(--c2)"/>
+      <rect x="22" y="6" width="6" height="16" rx="1.6" fill="var(--c3)"/>
+    </svg>
+    <span class="brand-name">Kanban</span>
+  </div>
+
+  <nav id="boardTabs" class="tabs" aria-label="Доски"></nav>
+  <button id="btnNewBoard" class="tab-add" title="Новая доска">+</button>
+
+  <div class="spacer"></div>
+
+  <button id="btnFilters" class="btn" title="Фильтры по тегам и приоритету" aria-expanded="false">
+    Фильтры <span id="filterCount" class="badge hidden">0</span>
+  </button>
+
+  <label class="search">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+    <input id="search" type="search" placeholder="Поиск по карточкам…" autocomplete="off" spellcheck="false">
+    <kbd>Ctrl K</kbd>
+  </label>
+
+  <button id="btnArchive" class="btn" title="Архив карточек">Архив</button>
+  <button id="btnAddColumn" class="btn primary">+ Колонка</button>
+  <button id="btnMenu" class="btn icon" title="Меню приложения" aria-haspopup="menu">⋯</button>
+  <button id="btnTheme" class="btn icon" title="Сменить тему">◐</button>
+</header>
+
+<div id="updateBanner" class="banner hidden">
+  <span class="banner-icon">↓</span>
+  <span id="updateText" class="banner-text"></span>
+  <button id="btnUpdateApply" class="btn primary sm">Обновить и перезапустить</button>
+  <button id="btnUpdateClose" class="btn icon" title="Скрыть">✕</button>
+</div>
+
+<div id="syncBanner" class="banner warn hidden">
+  <span class="banner-icon">⇅</span>
+  <span id="syncBannerText" class="banner-text"></span>
+  <button id="btnSyncPull" class="btn primary sm">Взять с сервера</button>
+  <button id="btnSyncPush" class="btn sm">Загрузить своё</button>
+  <button id="btnSyncLater" class="btn icon" title="Позже">✕</button>
+</div>
+
+<section id="filterPanel" class="filter-panel hidden" aria-label="Фильтры">
+  <div class="filter-group">
+    <span class="filter-label">Приоритет</span>
+    <div id="filterPriorities" class="chips"></div>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Теги</span>
+    <div id="filterTags" class="chips"></div>
+  </div>
+  <button id="btnClearFilters" class="link">Сбросить</button>
+</section>
+
+<main id="board" class="board" aria-label="Доска"></main>
+
+<footer class="statusbar">
+  <span id="statusText">загрузка…</span>
+  <span class="spacer"></span>
+  <button id="btnBackup" class="link">Резервная копия</button>
+  <button id="btnFolder" class="link">Папка с данными</button>
+  <button id="btnSyncNow" class="link" title="Синхронизировать с сервером сейчас">Синхронизировать</button>
+  <span id="syncState" class="save-state"></span>
+  <span id="saveState" class="save-state" title="Состояние сохранения">—</span>
+</footer>
+
+<!-- контекстное меню -->
+<div id="menu" class="menu hidden" role="menu"></div>
+
+<!-- редактор карточки -->
+<dialog id="cardDialog" class="dialog wide">
+  <form id="cardForm" method="dialog">
+    <header class="dialog-head">
+      <h2 id="cardDialogTitle">Карточка</h2>
+      <span id="cardSubtitle" class="dialog-sub"></span>
+      <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+    </header>
+
+    <div class="dialog-body">
+      <label class="field">
+        <span>Заголовок</span>
+        <input id="fTitle" maxlength="300" required autocomplete="off">
+      </label>
+
+      <label class="field">
+        <span>Описание</span>
+        <textarea id="fDesc" rows="4" placeholder="Детали задачи…"></textarea>
+      </label>
+
+      <div class="row">
+        <label class="field">
+          <span>Приоритет</span>
+          <select id="fPriority">
+            <option value="0">Низкий</option>
+            <option value="1">Обычный</option>
+            <option value="2">Высокий</option>
+            <option value="3">Срочный</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Срок</span>
+          <input id="fDue" type="date">
+        </label>
+      </div>
+
+      <label class="field tag-field">
+        <span>Теги <em>(через запятую)</em></span>
+        <div class="tag-input-wrap">
+          <input id="fTags" placeholder="дизайн, клиент, срочно" autocomplete="off" spellcheck="false">
+          <div id="tagSuggest" class="tag-suggest hidden" role="listbox" aria-label="Подсказки тегов"></div>
+        </div>
+        <div id="tagQuick" class="tag-quick hidden">
+          <span class="tag-quick-label">Последние теги:</span>
+          <div id="tagQuickList" class="tag-quick-list"></div>
+        </div>
+      </label>
+
+      <section class="section">
+        <header class="section-head">
+          <h3>Чек-лист <span id="checkProgress" class="muted"></span></h3>
+          <button type="button" id="btnAddCheck" class="btn sm">+ Пункт</button>
+        </header>
+        <ul id="checklist" class="checklist"></ul>
+        <p id="checklistEmpty" class="hint-left">Пунктов пока нет — добавьте первый.</p>
+      </section>
+
+      <section class="section">
+        <header class="section-head">
+          <h3>Вложения</h3>
+          <div class="section-actions">
+            <button type="button" id="btnAddLink" class="btn sm">+ Ссылка</button>
+            <button type="button" id="btnAddFile" class="btn sm">+ Файл</button>
+          </div>
+        </header>
+        <ul id="attachments" class="attachments"></ul>
+        <p id="attachEmpty" class="hint-left">Ссылки и файлы до 25 МБ.</p>
+        <input id="fileInput" type="file" multiple hidden>
+      </section>
+    </div>
+
+    <footer class="dialog-foot">
+      <button type="button" id="btnArchiveCard" class="btn">В архив</button>
+      <button type="button" id="btnDeleteCard" class="btn danger">Удалить</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Сохранить</button>
+    </footer>
+    <p class="hint">Ctrl+Enter — сохранить, Esc — закрыть</p>
+  </form>
+</dialog>
+
+<!-- архив -->
+<dialog id="archiveDialog" class="dialog wide">
+  <header class="dialog-head">
+    <h2>Архив карточек</h2>
+    <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+  </header>
+  <div class="archive-body">
+    <p class="hint-left">Архивные карточки не показываются на доске, но остаются в базе и в экспорте.</p>
+    <div id="archiveList" class="archive-list"></div>
+  </div>
+  <footer class="dialog-foot">
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Закрыть</button>
+  </footer>
+</dialog>
+
+<!-- новая ссылка -->
+<dialog id="linkDialog" class="dialog small">
+  <form id="linkForm" method="dialog">
+    <header class="dialog-head">
+      <h2>Новая ссылка</h2>
+      <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+    </header>
+    <label class="field">
+      <span>Название</span>
+      <input id="linkTitle" maxlength="200" placeholder="Например, макет в Figma" autocomplete="off">
+    </label>
+    <label class="field">
+      <span>Адрес</span>
+      <input id="linkUrl" required placeholder="https://…" autocomplete="off" spellcheck="false">
+    </label>
+    <footer class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Добавить</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- синхронизация через WebDAV -->
+<dialog id="syncDialog" class="dialog wide">
+  <form id="syncForm" method="dialog">
+    <header class="dialog-head">
+      <h2>Синхронизация (WebDAV)</h2>
+      <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+    </header>
+
+    <div class="dialog-body">
+      <p class="hint-left">
+        Яндекс.Диск: <code>https://webdav.yandex.ru</code> · Mail.ru: <code>https://webdav.cloud.mail.ru</code><br>
+        Нужен <b>пароль приложения</b>, обычный пароль от почты не подойдёт.
+      </p>
+
+      <label class="field">
+        <span>Адрес сервера</span>
+        <input id="syncUrl" placeholder="https://webdav.yandex.ru" autocomplete="off" spellcheck="false">
+      </label>
+
+      <div class="row">
+        <label class="field">
+          <span>Логин</span>
+          <input id="syncLogin" placeholder="you@yandex.ru" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>Пароль приложения</span>
+          <input id="syncPassword" type="password" autocomplete="new-password" spellcheck="false">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Папка на сервере</span>
+        <input id="syncFolder" placeholder="Kanban" autocomplete="off" spellcheck="false">
+      </label>
+
+      <div class="sync-flags">
+        <label class="check-inline"><input id="syncEnabled" type="checkbox"> Включить синхронизацию</label>
+        <label class="check-inline"><input id="syncOnStart" type="checkbox"> при запуске</label>
+        <label class="check-inline"><input id="syncOnExit" type="checkbox"> при выходе</label>
+      </div>
+
+      <p id="syncStatusLine" class="hint-left">Загрузка состояния…</p>
+      <pre id="syncLog" class="sync-log hidden"></pre>
+    </div>
+
+    <footer class="dialog-foot">
+      <button type="button" id="btnSyncTest" class="btn">Проверить подключение</button>
+      <button type="button" id="btnSyncRun" class="btn primary">Синхронизировать</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Закрыть</button>
+      <button type="submit" class="btn">Сохранить</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- общая форма ввода -->
+<dialog id="promptDialog" class="dialog small">
+  <form id="promptForm" method="dialog">
+    <header class="dialog-head">
+      <h2 id="promptTitle">Ввод</h2>
+      <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+    </header>
+    <label class="field">
+      <span id="promptLabel">Значение</span>
+      <input id="promptInput" autocomplete="off">
+    </label>
+    <footer class="dialog-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">ОК</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- сведения о приложении -->
+<dialog id="infoDialog" class="dialog">
+  <header class="dialog-head">
+    <h2>О приложении</h2>
+    <button type="button" class="btn icon" data-close title="Закрыть">✕</button>
+  </header>
+  <div id="infoBody" class="info"></div>
+  <footer class="dialog-foot">
+    <span class="spacer"></span>
+    <button type="button" class="btn" data-close>Закрыть</button>
+  </footer>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
