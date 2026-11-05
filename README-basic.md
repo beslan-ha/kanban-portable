@@ -103,7 +103,9 @@
 3. **Обновить и перезапустить** — скачивается архив `Kanban-Basic-…` (эта сборка без синхронизации),
    проверяется SHA-256, файлы подменяются, приложение перезапускается.
 
-Проверка кэшируется на 15 минут (лимит GitHub API — 60 запросов в час на IP).
+Проверка по умолчанию выполняется **раз в сутки**, результат хранится в `update-state.json` и
+переживает перезапуски; ручная проверка всегда запрашивает GitHub заново. При ошибке сети повтор —
+не чаще раза в 5 минут.
 
 ### Из папки `updates\`
 
@@ -148,7 +150,7 @@
   "checkUpdatesOnline": true,
   "updateRepo": "beslan-ha/kanban-portable",
   "updateApiBase": "https://api.github.com",
-  "updateCheckMinutes": 15
+  "updateCheckMinutes": 1440
 }
 ```
 
@@ -157,7 +159,7 @@
 - `checkUpdatesOnStart` — проверять обновления при запуске и раз в минуту.
 - `autoApplyUpdates: true` — устанавливать найденное обновление без подтверждения (по умолчанию выключено).
 - `checkUpdatesOnline` — проверять GitHub Releases; `false` — только папка `updates\`.
-- `updateRepo` — репозиторий с релизами (`owner/name`), `updateCheckMinutes` — период онлайн-проверки.
+- `updateRepo` — репозиторий с релизами (`owner/name`), `updateCheckMinutes` — период проверки (1440 = сутки).
 
 ## Горячие клавиши
 

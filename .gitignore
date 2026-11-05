@@ -12,6 +12,7 @@ kanban.log
 kanban.log.*
 runtime.json
 sync-state.json
+update-state.json
 kanban.config.json
 backups/
 files/

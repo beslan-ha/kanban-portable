@@ -36,9 +36,13 @@ internal static class Updater
 
     private static readonly HttpClient Http = CreateClient();
     private static readonly object CacheLock = new();
-    private static DateTime _lastCheck = DateTime.MinValue;
+    private static DateTimeOffset _lastCheck = DateTimeOffset.MinValue;
     private static UpdateInfo? _cached;
     private static string? _etag;
+    private static string? _statePath;
+    private static string? _stateRepo;
+    private static DateTimeOffset _errorAt = DateTimeOffset.MinValue;
+    private static UpdateInfo? _errorInfo;
 
     public static string Dir(string appDir) => Path.Combine(appDir, "updates");
 
@@ -65,7 +69,7 @@ internal static class Updater
 
         if (!cfg.CheckUpdatesOnline) return folder;
 
-        UpdateInfo github = await CheckGitHubAsync(cfg, force, ct);
+        UpdateInfo github = await CheckGitHubAsync(appDir, cfg, force, ct);
         if (github.Available) return github;
 
         // Онлайн-проверка без ошибки: показываем её результат («последняя версия»).
@@ -125,7 +129,7 @@ internal static class Updater
     }
 
     /// <summary>Последний релиз на GitHub; результат кэшируется на UpdateCheckMinutes.</summary>
-    private static async Task<UpdateInfo> CheckGitHubAsync(AppConfig cfg, bool force, CancellationToken ct)
+    private static async Task<UpdateInfo> CheckGitHubAsync(string appDir, AppConfig cfg, bool force, CancellationToken ct)
     {
         var info = new UpdateInfo { Source = "github" };
 
@@ -136,11 +140,17 @@ internal static class Updater
             return info;
         }
 
+        EnsureStateLoaded(appDir, repo);
+
         int minutes = Math.Max(1, cfg.UpdateCheckMinutes);
         lock (CacheLock)
         {
-            if (!force && _cached is not null && DateTime.UtcNow - _lastCheck < TimeSpan.FromMinutes(minutes))
+            if (!force && _cached is not null && DateTimeOffset.UtcNow - _lastCheck < TimeSpan.FromMinutes(minutes))
                 return _cached;
+
+            // Ошибка сети: не дёргаем GitHub чаще, чем раз в 5 минут.
+            if (!force && _errorInfo is not null && DateTimeOffset.UtcNow - _errorAt < TimeSpan.FromMinutes(5))
+                return _errorInfo;
         }
 
         string apiBase = (cfg.UpdateApiBase ?? "https://api.github.com").TrimEnd('/');
@@ -158,16 +168,20 @@ internal static class Updater
             using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             if (res.StatusCode == HttpStatusCode.NotModified)
             {
-                lock (CacheLock)
+                UpdateInfo? cached;
+                lock (CacheLock) cached = _cached;
+
+                if (cached is not null)
                 {
-                    _lastCheck = DateTime.UtcNow;
-                    if (_cached is not null) return _cached;
+                    CacheSuccess(appDir, repo, cached);
+                    return cached;
                 }
             }
 
             if (!res.IsSuccessStatusCode)
             {
                 info.Error = $"GitHub вернул HTTP {(int)res.StatusCode} при проверке обновлений";
+                RememberError(info);
                 return info;
             }
 
@@ -175,23 +189,21 @@ internal static class Updater
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
+            string? newEtag = res.Headers.ETag?.Tag;
+            lock (CacheLock) _etag = newEtag;
+
             string tag = GetString(root, "tag_name") ?? "";
             info.Tag = tag;
             info.Version = tag.TrimStart('v', 'V');
             info.Notes = Shorten(GetString(root, "body"), 220);
             info.ReleaseUrl = GetString(root, "html_url");
 
-            string? newEtag = res.Headers.ETag?.Tag;
-            lock (CacheLock)
-            {
-                _etag = newEtag;
-                _lastCheck = DateTime.UtcNow;
-                _cached = info;
-            }
-
             if (string.IsNullOrEmpty(info.Version) ||
                 CompareVersions(info.Version, Program.AppVersion) <= 0)
+            {
+                CacheSuccess(appDir, repo, info);
                 return info;
+            }
 
             // Для полной версии берём Kanban-*, для Basic — Kanban-Basic-*.
             string prefix = Program.Edition == "basic" ? "Kanban-Basic-" : "Kanban-";
@@ -212,6 +224,7 @@ internal static class Updater
             if (chosen is null)
             {
                 info.Error = $"В релизе {tag} не найден архив обновления для этой версии";
+                CacheSuccess(appDir, repo, info);
                 return info;
             }
 
@@ -227,20 +240,113 @@ internal static class Updater
             info.Available = !string.IsNullOrEmpty(info.DownloadUrl);
             if (!info.Available) info.Error = "У релиза нет ссылки на скачивание";
 
-            lock (CacheLock) _cached = info;
+            CacheSuccess(appDir, repo, info);
             return info;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             info.Error = "GitHub не ответил вовремя";
+            RememberError(info);
             return info;
         }
         catch (Exception ex)
         {
             info.Error = "Не удалось проверить обновления на GitHub: " + ex.Message;
             AppLog.Info("Проверка обновлений на GitHub: " + ex.Message);
+            RememberError(info);
             return info;
         }
+    }
+
+    /// <summary>Сохраняет успешный результат проверки, чтобы пережить перезапуск.</summary>
+    private static void CacheSuccess(string appDir, string repo, UpdateInfo info)
+    {
+        lock (CacheLock)
+        {
+            _lastCheck = DateTimeOffset.UtcNow;
+            _cached = info;
+            _stateRepo = repo;
+            _errorInfo = null;
+            _errorAt = DateTimeOffset.MinValue;
+            SaveStateLocked(appDir);
+        }
+    }
+
+    private static void RememberError(UpdateInfo info)
+    {
+        lock (CacheLock)
+        {
+            _errorAt = DateTimeOffset.UtcNow;
+            _errorInfo = info;
+        }
+    }
+
+    private static void EnsureStateLoaded(string appDir, string repo)
+    {
+        string path = Path.Combine(appDir, "update-state.json");
+        lock (CacheLock)
+        {
+            if (string.Equals(_statePath, path, StringComparison.OrdinalIgnoreCase)) return;
+
+            _statePath = path;
+            _cached = null;
+            _lastCheck = DateTimeOffset.MinValue;
+            _etag = null;
+
+            try
+            {
+                if (!File.Exists(path)) return;
+
+                var state = JsonSerializer.Deserialize<PersistedState>(File.ReadAllText(path),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (state is null || state.Info is null) return;
+                if (!string.Equals(state.Repo, repo, StringComparison.OrdinalIgnoreCase)) return;
+
+                var info = state.Info;
+                info.CurrentVersion = Program.AppVersion;
+                if (!string.IsNullOrEmpty(info.Version))
+                    info.Available = CompareVersions(info.Version, Program.AppVersion) > 0 &&
+                                     !string.IsNullOrEmpty(info.DownloadUrl);
+
+                _cached = info;
+                _lastCheck = state.LastCheckUtc;
+                _etag = state.ETag;
+                _stateRepo = state.Repo;
+            }
+            catch (Exception ex) { AppLog.Info("Чтение update-state.json: " + ex.Message); }
+        }
+    }
+
+    private static void SaveStateLocked(string appDir)
+    {
+        try
+        {
+            var state = new PersistedState
+            {
+                LastCheckUtc = _lastCheck,
+                Repo = _stateRepo,
+                ETag = _etag,
+                Info = _cached,
+            };
+
+            File.WriteAllText(Path.Combine(appDir, "update-state.json"),
+                JsonSerializer.Serialize(state, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                }),
+                new UTF8Encoding(false));
+        }
+        catch (Exception ex) { AppLog.Info("Запись update-state.json: " + ex.Message); }
+    }
+
+    private sealed class PersistedState
+    {
+        public DateTimeOffset LastCheckUtc { get; set; }
+        public string? Repo { get; set; }
+        public string? ETag { get; set; }
+        public UpdateInfo? Info { get; set; }
     }
 
     /// <summary>Скачивает и устанавливает обновление, затем вызывает quit.</summary>

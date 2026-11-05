@@ -21,8 +21,8 @@ public sealed class AppConfig
     public string UpdateRepo { get; set; } = "beslan-ha/kanban-portable";
     /// <summary>Базовый адрес GitHub API (можно подменить для тестов).</summary>
     public string UpdateApiBase { get; set; } = "https://api.github.com";
-    /// <summary>Как часто повторять онлайн-проверку, минут.</summary>
-    public int UpdateCheckMinutes { get; set; } = 15;
+    /// <summary>Как часто повторять онлайн-проверку, минут. По умолчанию — раз в сутки.</summary>
+    public int UpdateCheckMinutes { get; set; } = 1440;
 #if !NOSYNC
     /// <summary>Синхронизация через WebDAV (Яндекс.Диск, Mail.ru, Nextcloud и т. п.).</summary>
     public SyncOptions Sync { get; set; } = new();
@@ -59,7 +59,7 @@ public sealed class AppConfig
 
         if (cfg.Port is < 1024 or > 65000) cfg.Port = 5183;
         if (cfg.BackupsToKeep < 3) cfg.BackupsToKeep = 3;
-        if (cfg.UpdateCheckMinutes < 1) cfg.UpdateCheckMinutes = 15;
+        if (cfg.UpdateCheckMinutes < 1) cfg.UpdateCheckMinutes = 1440;
         if (string.IsNullOrWhiteSpace(cfg.UpdateRepo)) cfg.UpdateRepo = "beslan-ha/kanban-portable";
         if (string.IsNullOrWhiteSpace(cfg.UpdateApiBase)) cfg.UpdateApiBase = "https://api.github.com";
 #if !NOSYNC
