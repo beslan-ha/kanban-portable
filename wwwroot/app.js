@@ -71,7 +71,7 @@ const api = {
   backup: () => request('POST', '/api/backup', {}),
   info: () => request('GET', '/api/info'),
   quit: () => request('POST', '/api/quit', {}),
-  checkUpdate: () => request('GET', '/api/update/check'),
+  checkUpdate: (force) => request('GET', '/api/update/check' + (force ? '?force=1' : '')),
   applyUpdate: () => request('POST', '/api/update/apply', {}),
 
   syncStatus: () => request('GET', '/api/sync/status'),
@@ -1755,13 +1755,14 @@ let dismissedUpdate = null;
 
 async function checkUpdates(notifyIfNone) {
   try {
-    const info = await api.checkUpdate();
+    const info = await api.checkUpdate(!!notifyIfNone);
     updateInfo = info;
 
     if (info.available) {
       const notes = info.notes ? ' — ' + info.notes : '';
+      const where = info.source === 'github' ? 'На GitHub вышла версия' : 'В папке updates лежит версия';
       $('#updateText').textContent =
-        `В папке updates лежит версия ${info.version} (у вас ${info.currentVersion})${notes}`;
+        `${where} ${info.version} (у вас ${info.currentVersion})${notes}`;
       if (dismissedUpdate !== info.version) $('#updateBanner').classList.remove('hidden');
     } else {
       $('#updateBanner').classList.add('hidden');
@@ -1777,20 +1778,27 @@ async function checkUpdates(notifyIfNone) {
 
 async function applyUpdate() {
   if (!updateInfo?.available) return;
-  if (!confirm(`Установить версию ${updateInfo.version} и перезапустить приложение?`)) return;
+
+  const size = updateInfo.size ? ` (${Math.round(updateInfo.size / 1024 / 1024)} МБ)` : '';
+  if (!confirm(`Установить версию ${updateInfo.version}${size} и перезапустить приложение?`)) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = '<div class="overlay-box"><h2>Скачиваем обновление…</h2>' +
+    '<p>Не закрывайте приложение. После загрузки оно перезапустится автоматически.</p></div>';
+  document.body.appendChild(overlay);
 
   try {
     await api.applyUpdate();
   } catch (err) {
-    toast(err.message, 'err');
+    overlay.remove();
+    toast('Обновление не установлено: ' + err.message, 'err');
     return;
   }
 
-  const overlay = document.createElement('div');
-  overlay.className = 'overlay';
-  overlay.innerHTML = '<div class="overlay-box"><h2>Обновление устанавливается…</h2>' +
-    '<p>Приложение закроется, файл будет заменён и Kanban запустится снова.</p></div>';
-  document.body.appendChild(overlay);
+  overlay.querySelector('.overlay-box').innerHTML =
+    '<h2>Обновление устанавливается…</h2>' +
+    '<p>Приложение закроется, файл будет заменён и Kanban запустится снова.</p>';
 
   // Ждём, пока сервер поднимется после перезапуска, и перезагружаем вкладку.
   const started = Date.now();

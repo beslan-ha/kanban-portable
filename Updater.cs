@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -15,22 +18,68 @@ public sealed class UpdateInfo
     public long Size { get; set; }
     public string UpdateDir { get; set; } = "";
     public string? Error { get; set; }
+    /// <summary>Откуда обновление: "folder" (updates\) или "github".</summary>
+    public string? Source { get; set; }
+    public string? DownloadUrl { get; set; }
+    public string? Sha256 { get; set; }
+    public string? ReleaseUrl { get; set; }
+    public string? Tag { get; set; }
 }
 
 /// <summary>
-/// Обновление «из папки»: рядом с exe лежит папка updates с version.json и новым Kanban.exe.
-/// Интернет не нужен — файл обновления приносит пользователь.
+/// Обновления из двух источников: папка updates\ рядом с exe (офлайн) и GitHub Releases (онлайн).
+/// Онлайн-проверка кэшируется, чтобы не тратить лимит GitHub API.
 /// </summary>
 internal static class Updater
 {
+    private const string ExeName = "Kanban.exe";
+
+    private static readonly HttpClient Http = CreateClient();
+    private static readonly object CacheLock = new();
+    private static DateTime _lastCheck = DateTime.MinValue;
+    private static UpdateInfo? _cached;
+    private static string? _etag;
+
     public static string Dir(string appDir) => Path.Combine(appDir, "updates");
 
-    /// <summary>Читает updates\version.json и сравнивает версию с текущей.</summary>
-    public static UpdateInfo Check(string appDir)
+    private static HttpClient CreateClient()
     {
-        var info = new UpdateInfo { CurrentVersion = Program.AppVersion, UpdateDir = Dir(appDir) };
-        string manifest = Path.Combine(info.UpdateDir, "version.json");
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = true,
+            AutomaticDecompression = DecompressionMethods.All,
+        };
 
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Kanban/" + Program.AppVersion);
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return client;
+    }
+
+    /// <summary>Проверяет папку updates и GitHub. Папка имеет приоритет (работает без интернета).</summary>
+    public static async Task<UpdateInfo> CheckAsync(string appDir, AppConfig cfg, bool force = false,
+        CancellationToken ct = default)
+    {
+        UpdateInfo folder = CheckFolder(appDir);
+        if (folder.Available) return folder;
+
+        if (!cfg.CheckUpdatesOnline) return folder;
+
+        UpdateInfo github = await CheckGitHubAsync(cfg, force, ct);
+        if (github.Available) return github;
+
+        // Онлайн-проверка без ошибки: показываем её результат («последняя версия»).
+        if (string.IsNullOrEmpty(github.Error)) return github;
+
+        // Ошибку сети показываем, только если в папке нет своего (возможно, битого) манифеста.
+        return string.IsNullOrEmpty(folder.Error) ? github : folder;
+    }
+
+    /// <summary>Офлайн-обновление из updates\version.json.</summary>
+    public static UpdateInfo CheckFolder(string appDir)
+    {
+        var info = new UpdateInfo { Source = "folder", UpdateDir = Dir(appDir) };
+        string manifest = Path.Combine(info.UpdateDir, "version.json");
         if (!File.Exists(manifest)) return info;
 
         try
@@ -61,6 +110,7 @@ internal static class Updater
 
             int cmp = CompareVersions(info.Version, Program.AppVersion);
             info.Available = cmp > 0 && File.Exists(exePath);
+            info.Source = "folder";
 
             if (cmp > 0 && !File.Exists(exePath))
                 info.Error = $"В папке updates нет файла «{Path.GetFileName(info.FileName)}»";
@@ -68,39 +118,155 @@ internal static class Updater
         catch (Exception ex)
         {
             info.Error = "Не удалось прочитать updates\\version.json: " + ex.Message;
-            AppLog.Error("Проверка обновлений", ex);
+            AppLog.Error("Проверка обновлений в папке", ex);
         }
 
         return info;
     }
 
-    /// <summary>
-    /// Кладёт новый exe рядом и запускает отдельный cmd, который дождётся выхода приложения,
-    /// подменит файл и снова запустит Kanban. Затем вызывается quit — приложение закрывается.
-    /// </summary>
-    public static void Apply(string appDir, UpdateInfo info, Action quit)
+    /// <summary>Последний релиз на GitHub; результат кэшируется на UpdateCheckMinutes.</summary>
+    private static async Task<UpdateInfo> CheckGitHubAsync(AppConfig cfg, bool force, CancellationToken ct)
+    {
+        var info = new UpdateInfo { Source = "github" };
+
+        string repo = (cfg.UpdateRepo ?? "").Trim().Trim('/');
+        if (repo.Length == 0)
+        {
+            info.Error = "Не указан репозиторий обновлений (updateRepo)";
+            return info;
+        }
+
+        int minutes = Math.Max(1, cfg.UpdateCheckMinutes);
+        lock (CacheLock)
+        {
+            if (!force && _cached is not null && DateTime.UtcNow - _lastCheck < TimeSpan.FromMinutes(minutes))
+                return _cached;
+        }
+
+        string apiBase = (cfg.UpdateApiBase ?? "https://api.github.com").TrimEnd('/');
+        string url = $"{apiBase}/repos/{repo}/releases/latest";
+
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+
+            string? etag;
+            lock (CacheLock) etag = _etag;
+            if (!force && !string.IsNullOrEmpty(etag))
+                req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+
+            using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (res.StatusCode == HttpStatusCode.NotModified)
+            {
+                lock (CacheLock)
+                {
+                    _lastCheck = DateTime.UtcNow;
+                    if (_cached is not null) return _cached;
+                }
+            }
+
+            if (!res.IsSuccessStatusCode)
+            {
+                info.Error = $"GitHub вернул HTTP {(int)res.StatusCode} при проверке обновлений";
+                return info;
+            }
+
+            string json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            string tag = GetString(root, "tag_name") ?? "";
+            info.Tag = tag;
+            info.Version = tag.TrimStart('v', 'V');
+            info.Notes = Shorten(GetString(root, "body"), 220);
+            info.ReleaseUrl = GetString(root, "html_url");
+
+            string? newEtag = res.Headers.ETag?.Tag;
+            lock (CacheLock)
+            {
+                _etag = newEtag;
+                _lastCheck = DateTime.UtcNow;
+                _cached = info;
+            }
+
+            if (string.IsNullOrEmpty(info.Version) ||
+                CompareVersions(info.Version, Program.AppVersion) <= 0)
+                return info;
+
+            // Для полной версии берём Kanban-*, для Basic — Kanban-Basic-*.
+            string prefix = Program.Edition == "basic" ? "Kanban-Basic-" : "Kanban-";
+            JsonElement? chosen = null;
+            if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var asset in assets.EnumerateArray())
+                {
+                    string name = GetString(asset, "name") ?? "";
+                    if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (Program.Edition != "basic" && name.StartsWith("Kanban-Basic-", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+                    chosen = asset;
+                    break;
+                }
+            }
+
+            if (chosen is null)
+            {
+                info.Error = $"В релизе {tag} не найден архив обновления для этой версии";
+                return info;
+            }
+
+            var a = chosen.Value;
+            info.FileName = GetString(a, "name");
+            info.DownloadUrl = GetString(a, "browser_download_url");
+            info.Size = a.TryGetProperty("size", out var size) && size.TryGetInt64(out long s) ? s : 0;
+
+            string? digest = GetString(a, "digest");
+            if (!string.IsNullOrEmpty(digest) && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                info.Sha256 = digest["sha256:".Length..];
+
+            info.Available = !string.IsNullOrEmpty(info.DownloadUrl);
+            if (!info.Available) info.Error = "У релиза нет ссылки на скачивание";
+
+            lock (CacheLock) _cached = info;
+            return info;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            info.Error = "GitHub не ответил вовремя";
+            return info;
+        }
+        catch (Exception ex)
+        {
+            info.Error = "Не удалось проверить обновления на GitHub: " + ex.Message;
+            AppLog.Info("Проверка обновлений на GitHub: " + ex.Message);
+            return info;
+        }
+    }
+
+    /// <summary>Скачивает и устанавливает обновление, затем вызывает quit.</summary>
+    public static async Task ApplyAsync(string appDir, UpdateInfo info, Action quit, CancellationToken ct = default)
     {
         if (!info.Available) throw new AppException(400, "Новое обновление не найдено");
-        if (string.IsNullOrEmpty(info.FileName)) throw new AppException(400, "В version.json не указан файл обновления");
 
-        string source = Path.Combine(info.UpdateDir, Path.GetFileName(info.FileName));
-        if (!File.Exists(source)) throw new AppException(404, "Файл обновления не найден");
+        if (string.Equals(info.Source, "github", StringComparison.OrdinalIgnoreCase))
+        {
+            await DownloadAndStageAsync(appDir, info, ct);
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(info.FileName))
+                throw new AppException(400, "В version.json не указан файл обновления");
 
-        string exePath = Environment.ProcessPath ?? Path.Combine(appDir, "Kanban.exe");
-        if (!File.Exists(exePath)) throw new AppException(500, "Не удалось определить путь к Kanban.exe");
+            string source = Path.Combine(info.UpdateDir, Path.GetFileName(info.FileName));
+            if (!File.Exists(source)) throw new AppException(404, "Файл обновления не найден");
+            File.Copy(source, Path.Combine(appDir, "Kanban.update.exe"), true);
+        }
 
-        string exeName = Path.GetFileName(exePath);
-        string tempName = Path.GetFileNameWithoutExtension(exeName) + ".update.exe";
-        string tempPath = Path.Combine(appDir, tempName);
+        WriteScript(appDir);
 
-        File.Copy(source, tempPath, true);
+        AppLog.Info($"Обновление {Program.AppVersion} → {info.Version} ({info.Source}): Kanban.update.exe");
 
-        string script = Path.Combine(appDir, "update.cmd");
-        File.WriteAllText(script, BuildScript(tempName, exeName), new UTF8Encoding(false));
-
-        AppLog.Info($"Обновление {Program.AppVersion} → {info.Version}: {tempName}");
-
-        Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"\"{script}\"\"")
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c \"\"update.cmd\"\"")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -110,19 +276,80 @@ internal static class Updater
         quit();
     }
 
+    private static async Task DownloadAndStageAsync(string appDir, UpdateInfo info, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(info.DownloadUrl)) throw new AppException(400, "Нет ссылки на файл обновления");
+
+        string zipPath = Path.Combine(appDir, "Kanban.download.zip");
+        try
+        {
+            using (var res = await Http.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+            {
+                if (!res.IsSuccessStatusCode)
+                    throw new AppException(502, $"Не удалось скачать обновление (HTTP {(int)res.StatusCode})");
+
+                await using var source = await res.Content.ReadAsStreamAsync(ct);
+                await using var target = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                await source.CopyToAsync(target, ct);
+            }
+
+            var file = new FileInfo(zipPath);
+            if (info.Size > 0 && file.Length != info.Size)
+                throw new AppException(502, "Размер скачанного файла не совпадает с ожидаемым");
+
+            if (!string.IsNullOrEmpty(info.Sha256))
+            {
+                string hash = Convert.ToHexString(await ComputeSha256Async(zipPath, ct));
+                if (!hash.Equals(info.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new AppException(502, "Контрольная сумма скачанного файла не совпала");
+            }
+
+            using var zip = ZipFile.OpenRead(zipPath);
+            Extract(zip, ExeName, Path.Combine(appDir, "Kanban.update.exe"));
+
+            // DLL необязательны: в старых релизах их могло не быть в архиве.
+            Extract(zip, "e_sqlite3.dll", Path.Combine(appDir, "e_sqlite3.update.dll"), required: false);
+            Extract(zip, "vcruntime140_cor3.dll", Path.Combine(appDir, "vcruntime140_cor3.update.dll"), required: false);
+        }
+        finally
+        {
+            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+        }
+    }
+
+    private static void Extract(ZipArchive zip, string entryName, string target, bool required = true)
+    {
+        var entry = zip.Entries.FirstOrDefault(e =>
+            string.Equals(e.FullName.Replace('\\', '/'), entryName, StringComparison.OrdinalIgnoreCase));
+
+        if (entry is null)
+        {
+            if (required) throw new AppException(502, $"В архиве обновления нет файла {entryName}");
+            return;
+        }
+
+        entry.ExtractToFile(target, true);
+    }
+
+    private static async Task<byte[]> ComputeSha256Async(string path, CancellationToken ct)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return await SHA256.HashDataAsync(stream, ct);
+    }
+
     /// <summary>Убирает следы прошлого обновления при старте.</summary>
     public static void Cleanup(string appDir)
     {
         try
         {
-            string exeName = Path.GetFileName(Environment.ProcessPath ?? "Kanban.exe");
-            string tempName = Path.GetFileNameWithoutExtension(exeName) + ".update.exe";
-
             foreach (string path in new[]
                      {
-                         Path.Combine(appDir, tempName),
+                         Path.Combine(appDir, "Kanban.update.exe"),
+                         Path.Combine(appDir, "e_sqlite3.update.dll"),
+                         Path.Combine(appDir, "vcruntime140_cor3.update.dll"),
+                         Path.Combine(appDir, "Kanban.download.zip"),
                          Path.Combine(appDir, "update.cmd"),
-                         Path.Combine(appDir, exeName + ".old"),
+                         Path.Combine(appDir, "Kanban.exe.old"),
                      })
             {
                 try { if (File.Exists(path)) File.Delete(path); }
@@ -132,26 +359,40 @@ internal static class Updater
         catch (Exception ex) { AppLog.Error("Очистка файлов обновления", ex); }
     }
 
-    private static string BuildScript(string tempName, string exeName)
+    private static void WriteScript(string appDir)
     {
+        string script = Path.Combine(appDir, "update.cmd");
+
         // ping вместо timeout: timeout не работает, когда у cmd нет консоли.
-        // Подменяем файл, пока он занят, с повторами — приложение закрывается не мгновенно.
-        return $"""
+        // Ждём, пока приложение отпустит exe, затем подменяем файлы и запускаем заново.
+        string content = """
             @echo off
             setlocal
             cd /d "%~dp0"
             set /a tries=0
             :loop
             ping -n 2 127.0.0.1 >nul
-            move /y "{tempName}" "{exeName}" >nul 2>&1
+            move /y "Kanban.update.exe" "Kanban.exe" >nul 2>&1
             if not errorlevel 1 goto done
             set /a tries+=1
-            if %tries% lss 40 goto loop
+            if %tries% lss 60 goto loop
             exit /b 1
             :done
-            start "" "{exeName}"
+            if exist "e_sqlite3.update.dll" move /y "e_sqlite3.update.dll" "e_sqlite3.dll" >nul 2>&1
+            if exist "vcruntime140_cor3.update.dll" move /y "vcruntime140_cor3.update.dll" "vcruntime140_cor3.dll" >nul 2>&1
+            start "" "Kanban.exe"
             (goto) 2>nul & del "%~f0"
             """;
+
+        File.WriteAllText(script, content, new UTF8Encoding(false));
+    }
+
+    private static string? Shorten(string? text, int max)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        string s = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        while (s.Contains("  ")) s = s.Replace("  ", " ");
+        return s.Length <= max ? s : s[..max].TrimEnd() + "…";
     }
 
     private static string? GetString(JsonElement root, string name)

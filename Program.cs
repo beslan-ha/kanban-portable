@@ -17,7 +17,14 @@ namespace Kanban;
 
 internal static class Program
 {
-    public const string AppVersion = "1.2.6";
+    public const string AppVersion = "1.3.0";
+
+#if NOSYNC
+    /// <summary>Издание: от него зависит, какой архив скачивать с GitHub.</summary>
+    public const string Edition = "basic";
+#else
+    public const string Edition = "full";
+#endif
 
     public static string AppDir { get; } = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     public static string LogPath { get; } = Path.Combine(AppContext.BaseDirectory, "kanban.log");
@@ -171,30 +178,31 @@ internal static class Program
 
         TrayContext? tray = null;
 
-        void ApplyUpdate(UpdateInfo info)
-        {
-            try
-            {
-                Updater.Apply(AppDir, info, () => Interlocked.Exchange(ref quitRequested, 1));
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("Применение обновления", ex);
-                tray?.Notify("Не удалось установить обновление", ex.Message, ToolTipIcon.Error);
-            }
-        }
-
-        UpdateInfo? foundUpdate = null;
+        // Проверка обновлений при запуске — в фоне, чтобы окно открывалось сразу.
         if (cfg.CheckUpdatesOnStart)
         {
-            try
+            _ = Task.Run(async () =>
             {
-                foundUpdate = Updater.Check(AppDir);
-                if (foundUpdate.Error is not null) AppLog.Error("Проверка обновлений: " + foundUpdate.Error);
-                else if (foundUpdate.Available)
-                    AppLog.Info($"Доступно обновление {foundUpdate.Version} (текущая {AppVersion})");
-            }
-            catch (Exception ex) { AppLog.Error("Проверка обновлений", ex); }
+                try
+                {
+                    var info = await Updater.CheckAsync(AppDir, cfg);
+                    if (!string.IsNullOrEmpty(info.Error))
+                    {
+                        AppLog.Info("Проверка обновлений: " + info.Error);
+                    }
+                    else if (info.Available)
+                    {
+                        AppLog.Info($"Доступно обновление {info.Version} ({info.Source}); текущая {AppVersion}");
+
+                        if (cfg.AutoApplyUpdates)
+                        {
+                            AppLog.Info("Автоматическая установка обновления " + info.Version);
+                            await Updater.ApplyAsync(AppDir, info, () => Interlocked.Exchange(ref quitRequested, 1));
+                        }
+                    }
+                }
+                catch (Exception ex) { AppLog.Error("Проверка обновлений", ex); }
+            });
         }
 
         tray = new TrayContext(
@@ -241,32 +249,36 @@ internal static class Program
 #endif
             onUpdate: () =>
             {
-                var info = Updater.Check(AppDir);
-                if (info.Error is not null)
+                _ = Task.Run(async () =>
                 {
-                    MessageBox.Show(info.Error, "Обновление Kanban", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                if (!info.Available)
-                {
-                    MessageBox.Show($"Установлена последняя версия: {AppVersion}.", "Обновление Kanban",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
+                    try
+                    {
+                        var info = await Updater.CheckAsync(AppDir, cfg, force: true);
 
-                string notes = string.IsNullOrWhiteSpace(info.Notes) ? "" : "\n\n" + info.Notes.Trim();
-                var answer = MessageBox.Show(
-                    $"Доступна версия {info.Version}.{notes}\n\nУстановить и перезапустить приложение?",
-                    "Обновление Kanban", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (answer == DialogResult.Yes) ApplyUpdate(info);
+                        if (!string.IsNullOrEmpty(info.Error))
+                        {
+                            tray?.Notify("Обновление Kanban", info.Error, ToolTipIcon.Warning);
+                            return;
+                        }
+
+                        if (!info.Available)
+                        {
+                            tray?.Notify("Обновление Kanban", $"Установлена последняя версия: {AppVersion}", ToolTipIcon.Info);
+                            return;
+                        }
+
+                        tray?.Notify("Доступно обновление",
+                            $"{info.Version}. Откройте доску — появится баннер «Обновить».", ToolTipIcon.Info);
+                        Shell.OpenUrl(url);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Error("Проверка обновлений из трея", ex);
+                        tray?.Notify("Обновление Kanban", ex.Message, ToolTipIcon.Error);
+                    }
+                });
             },
             onQuit: Quit);
-
-        if (foundUpdate is { Available: true } && cfg.AutoApplyUpdates)
-        {
-            AppLog.Info("Автоматическая установка обновления " + foundUpdate.Version);
-            ApplyUpdate(foundUpdate);
-        }
 
 #if !NOSYNC
         // Синхронизация при запуске — в фоне, чтобы окно и доска открывались сразу.

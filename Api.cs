@@ -283,18 +283,24 @@ public static class Api
             });
         }));
 
-        // ---- обновление из папки updates ----
-        app.MapGet("/api/update/check", () => Guard(() => Results.Json(Updater.Check(store.DataDir))));
-
-        app.MapPost("/api/update/apply", () => Guard(() =>
+        // ---- обновление: папка updates\ и GitHub Releases ----
+        app.MapGet("/api/update/check", async (HttpContext ctx, CancellationToken ct) =>
         {
-            var info = Updater.Check(store.DataDir);
-            if (!info.Available)
-                return Results.Json(new { error = info.Error ?? "Обновление не найдено" }, statusCode: 400);
+            bool force = ctx.Request.Query["force"] == "1";
+            return await GuardAsync(async () =>
+                Results.Json(await Updater.CheckAsync(store.DataDir, cfg, force, ct)));
+        });
 
-            Updater.Apply(store.DataDir, info, quit);
-            return Results.Json(new { ok = true, version = info.Version });
-        }));
+        app.MapPost("/api/update/apply", async (CancellationToken ct) =>
+            await GuardAsync(async () =>
+            {
+                var info = await Updater.CheckAsync(store.DataDir, cfg, force: true, ct);
+                if (!info.Available)
+                    return Results.Json(new { error = info.Error ?? "Обновление не найдено" }, statusCode: 400);
+
+                await Updater.ApplyAsync(store.DataDir, info, quit, ct);
+                return Results.Json(new { ok = true, version = info.Version, source = info.Source });
+            }));
 
         app.MapPost("/api/reveal", () => Guard(() =>
         {
