@@ -1343,6 +1343,10 @@ function mainMenu(anchor) {
     { text: 'Экспорт с вложениями…', hint: '.zip', action: exportZip },
     { text: 'Импорт (JSON или ZIP)…', action: importData },
     { sep: true },
+    { text: 'Увеличить шрифт', hint: 'Ctrl +', action: () => changeFontScale(FONT_STEP) },
+    { text: 'Уменьшить шрифт', hint: 'Ctrl −', action: () => changeFontScale(-FONT_STEP) },
+    { text: 'Сбросить масштаб', hint: '100%', action: resetFontScale },
+    { sep: true },
     { text: 'Проверить обновления', action: () => checkUpdates(true) },
     { text: 'Открыть папку с данными', action: () => request('POST', '/api/reveal', {}).catch(() => {}) },
     { text: 'О приложении', action: showInfo },
@@ -2110,6 +2114,46 @@ function applyTheme(theme) {
   $('#btnTheme').title = theme === 'light' ? 'Тёмная тема' : 'Светлая тема';
 }
 
+/* ============================ масштаб интерфейса ============================ */
+
+const FONT_MIN = 0.8;
+const FONT_MAX = 1.5;
+const FONT_STEP = 0.1;
+let fontScale = 1;
+
+function applyFontScale(value, notify = false) {
+  let scale = Number(value);
+  if (!Number.isFinite(scale)) scale = 1;
+
+  scale = Math.min(FONT_MAX, Math.max(FONT_MIN, Math.round(scale * 10) / 10));
+  fontScale = scale;
+
+  // zoom на <html> масштабирует всю страницу целиком, как встроенный зум браузера.
+  document.documentElement.style.zoom = scale === 1 ? '' : String(scale);
+  localStorage.setItem('kanban.fontScale', String(scale));
+
+  const label = Math.round(scale * 100) + '%';
+  const node = $('#fontScale');
+  if (node) node.textContent = label;
+
+  const minus = $('#btnFontMinus');
+  const plus = $('#btnFontPlus');
+  if (minus) minus.disabled = scale <= FONT_MIN + 0.001;
+  if (plus) plus.disabled = scale >= FONT_MAX - 0.001;
+
+  document.body.classList.toggle('font-large', scale >= 1.2);
+
+  if (notify) toast('Масштаб интерфейса: ' + label);
+}
+
+function changeFontScale(delta) {
+  applyFontScale(fontScale + delta, true);
+}
+
+function resetFontScale() {
+  applyFontScale(1, true);
+}
+
 /* ============================ инициализация ============================ */
 
 function bindUi() {
@@ -2134,6 +2178,9 @@ function bindUi() {
   $('#btnTheme').onclick = () => {
     applyTheme(document.body.dataset.theme === 'light' ? 'dark' : 'light');
   };
+
+  $('#btnFontMinus').onclick = () => changeFontScale(-FONT_STEP);
+  $('#btnFontPlus').onclick = () => changeFontScale(FONT_STEP);
 
   $('#btnFilters').onclick = (e) => {
     e.stopPropagation();
@@ -2193,6 +2240,15 @@ function bindUi() {
       $('#search').focus();
       $('#search').select();
     }
+
+    if (e.ctrlKey || e.metaKey) {
+      const plus = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd';
+      const minus = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract';
+      if (plus) { e.preventDefault(); changeFontScale(FONT_STEP); }
+      else if (minus) { e.preventDefault(); changeFontScale(-FONT_STEP); }
+      else if (e.key === '0' || e.code === 'Numpad0') { e.preventDefault(); resetFontScale(); }
+    }
+
     if (e.key === 'Escape') hideMenu();
   });
 
@@ -2208,6 +2264,7 @@ function bindUi() {
 
 async function boot() {
   applyTheme(localStorage.getItem('kanban.theme') || 'dark');
+  applyFontScale(localStorage.getItem('kanban.fontScale') || 1);
   loadFilters();
   activeBoardId = Number(localStorage.getItem('kanban.board')) || null;
   bindUi();

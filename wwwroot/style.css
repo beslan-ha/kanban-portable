@@ -62,8 +62,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* ---------- шапка ---------- */
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 10px 16px;
   background: var(--bg-soft);
   border-bottom: 1px solid var(--border);
@@ -588,8 +589,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* ---------- статусбар ---------- */
 .statusbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 6px 14px;
   padding: 6px 16px;
   border-top: 1px solid var(--border);
   background: var(--bg-soft);
@@ -597,8 +599,34 @@ button, input, select, textarea { font: inherit; color: inherit; }
   color: var(--muted);
   flex: none;
 }
+
+/* Крупный масштаб: убираем второстепенное, чтобы шапка оставалась в одну строку */
+body.font-large .brand-name { display: none; }
+body.font-large .search kbd { display: none; }
+body.font-large .search { min-width: 110px; max-width: 170px; }
+body.font-large .topbar { gap: 6px 8px; padding: 8px 12px; }
+body.font-large .statusbar { gap: 4px 10px; padding: 6px 12px; }
+body.font-large #btnBackup,
+body.font-large #btnFolder { display: none; }
 .link { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
 .link:hover { color: var(--text); background: var(--panel-2); }
+
+.font-scale-box { display: inline-flex; align-items: center; gap: 2px; }
+.font-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.font-btn:hover:not(:disabled) { color: var(--text); background: var(--panel-2); border-color: var(--border-soft); }
+.font-btn:disabled { opacity: .35; cursor: default; }
+.font-scale { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
 .save-state { min-width: 74px; text-align: right; }
 .save-state.err { color: var(--danger); }
 .save-state.warn { color: var(--warn); }
