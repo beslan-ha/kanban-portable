@@ -29,6 +29,7 @@ async function request(method, url, body) {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    cache: 'no-store',
   });
 
   if (!res.ok) {
@@ -72,6 +73,7 @@ const api = {
   info: () => request('GET', '/api/info'),
   quit: () => request('POST', '/api/quit', {}),
   checkUpdate: (force) => request('GET', '/api/update/check' + (force ? '?force=1' : '')),
+  updateProgress: () => request('GET', '/api/update/progress'),
   applyUpdate: () => request('POST', '/api/update/apply', {}),
 
   syncStatus: () => request('GET', '/api/sync/status'),
@@ -1783,26 +1785,66 @@ async function checkUpdates(notifyIfNone) {
 async function applyUpdate() {
   if (!updateInfo?.available) return;
 
-  const size = updateInfo.size ? ` (${Math.round(updateInfo.size / 1024 / 1024)} МБ)` : '';
-  if (!confirm(`Установить версию ${updateInfo.version}${size} и перезапустить приложение?`)) return;
+  const sizeMb = updateInfo.size ? Math.round(updateInfo.size / 1024 / 1024) : 0;
+  const sizeText = sizeMb ? ` (${sizeMb} МБ)` : '';
+  if (!confirm(`Установить версию ${updateInfo.version}${sizeText} и перезапустить приложение?`)) return;
 
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = '<div class="overlay-box"><h2>Скачиваем обновление…</h2>' +
-    '<p>Не закрывайте приложение. После загрузки оно перезапустится автоматически.</p></div>';
+  overlay.innerHTML =
+    '<div class="overlay-box">' +
+      '<h2 id="updTitle">Скачиваем обновление…</h2>' +
+      '<div class="upd-bar" id="updBar"><span></span></div>' +
+      '<p class="upd-text" id="updText">Подготовка…</p>' +
+    '</div>';
   document.body.appendChild(overlay);
+
+  const bar = overlay.querySelector('#updBar > span');
+  const title = overlay.querySelector('#updTitle');
+  const text = overlay.querySelector('#updText');
+
+  let finished = false;
+  const progressTimer = setInterval(async () => {
+    if (finished) return;
+
+    try {
+      const p = await api.updateProgress();
+      if (!p || finished) return;
+
+      if (p.phase === 'download') {
+        const total = p.total || updateInfo.size || 0;
+        const percent = total > 0 ? Math.min(100, Math.round((p.received * 100) / total)) : 0;
+        bar.style.width = percent + '%';
+        text.textContent = total > 0
+          ? `${formatSize(p.received)} из ${formatSize(total)} · ${percent}%`
+          : formatSize(p.received);
+      } else if (p.phase === 'extract') {
+        bar.style.width = '100%';
+        title.textContent = 'Распаковываем обновление…';
+        text.textContent = 'Проверяем файлы';
+      } else if (p.phase === 'install') {
+        bar.style.width = '100%';
+        title.textContent = 'Устанавливаем обновление…';
+        text.textContent = 'Приложение закроется и запустится снова';
+      }
+    } catch { /* сервер уже перезапускается */ }
+  }, 350);
 
   try {
     await api.applyUpdate();
   } catch (err) {
+    finished = true;
+    clearInterval(progressTimer);
     overlay.remove();
     toast('Обновление не установлено: ' + err.message, 'err');
     return;
   }
 
-  overlay.querySelector('.overlay-box').innerHTML =
-    '<h2>Обновление устанавливается…</h2>' +
-    '<p>Приложение закроется, файл будет заменён и Kanban запустится снова.</p>';
+  finished = true;
+  clearInterval(progressTimer);
+  bar.style.width = '100%';
+  title.textContent = 'Обновление устанавливается…';
+  text.textContent = 'Приложение закроется, файл будет заменён и Kanban запустится снова.';
 
   // Ждём, пока сервер поднимется после перезапуска, и перезагружаем вкладку.
   const started = Date.now();

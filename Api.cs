@@ -291,6 +291,8 @@ public static class Api
                 Results.Json(await Updater.CheckAsync(store.DataDir, cfg, force, ct)));
         });
 
+        app.MapGet("/api/update/progress", () => Guard(() => Results.Json(Updater.GetProgress())));
+
         app.MapPost("/api/update/apply", async (CancellationToken ct) =>
             await GuardAsync(async () =>
             {

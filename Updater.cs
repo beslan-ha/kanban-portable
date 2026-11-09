@@ -8,6 +8,18 @@ using System.Text.Json;
 
 namespace Kanban;
 
+/// <summary>Состояние скачивания обновления для индикатора прогресса.</summary>
+public sealed class UpdateProgressDto
+{
+    public bool Active { get; set; }
+    /// <summary>idle | download | extract | install | done | error</summary>
+    public string Phase { get; set; } = "idle";
+    public long Received { get; set; }
+    public long Total { get; set; }
+    public int Percent { get; set; }
+    public string? Error { get; set; }
+}
+
 public sealed class UpdateInfo
 {
     public string CurrentVersion { get; set; } = Program.AppVersion;
@@ -43,6 +55,8 @@ internal static class Updater
     private static string? _stateRepo;
     private static DateTimeOffset _errorAt = DateTimeOffset.MinValue;
     private static UpdateInfo? _errorInfo;
+    private static readonly object ProgressLock = new();
+    private static UpdateProgressDto _progress = new();
 
     public static string Dir(string appDir) => Path.Combine(appDir, "updates");
 
@@ -354,32 +368,111 @@ internal static class Updater
     {
         if (!info.Available) throw new AppException(400, "Новое обновление не найдено");
 
-        if (string.Equals(info.Source, "github", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            await DownloadAndStageAsync(appDir, info, ct);
+            if (string.Equals(info.Source, "github", StringComparison.OrdinalIgnoreCase))
+            {
+                StartProgress("download", info.Size);
+                await DownloadAndStageAsync(appDir, info, ct);
+            }
+            else
+            {
+                StartProgress("install", info.Size);
+                if (string.IsNullOrEmpty(info.FileName))
+                    throw new AppException(400, "В version.json не указан файл обновления");
+
+                string source = Path.Combine(info.UpdateDir, Path.GetFileName(info.FileName));
+                if (!File.Exists(source)) throw new AppException(404, "Файл обновления не найден");
+                File.Copy(source, Path.Combine(appDir, "Kanban.update.exe"), true);
+            }
+
+            SetProgressPhase("install");
+            WriteScript(appDir);
+
+            AppLog.Info($"Обновление {Program.AppVersion} → {info.Version} ({info.Source}): Kanban.update.exe");
+
+            Process.Start(new ProcessStartInfo("cmd.exe", "/c \"\"update.cmd\"\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = appDir,
+            });
+
+            quit();
         }
-        else
+        catch (Exception ex)
         {
-            if (string.IsNullOrEmpty(info.FileName))
-                throw new AppException(400, "В version.json не указан файл обновления");
-
-            string source = Path.Combine(info.UpdateDir, Path.GetFileName(info.FileName));
-            if (!File.Exists(source)) throw new AppException(404, "Файл обновления не найден");
-            File.Copy(source, Path.Combine(appDir, "Kanban.update.exe"), true);
+            FailProgress(ex.Message);
+            throw;
         }
+    }
 
-        WriteScript(appDir);
-
-        AppLog.Info($"Обновление {Program.AppVersion} → {info.Version} ({info.Source}): Kanban.update.exe");
-
-        Process.Start(new ProcessStartInfo("cmd.exe", "/c \"\"update.cmd\"\"")
+    /// <summary>Текущее состояние загрузки обновления.</summary>
+    public static UpdateProgressDto GetProgress()
+    {
+        lock (ProgressLock)
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = appDir,
-        });
+            return new UpdateProgressDto
+            {
+                Active = _progress.Active,
+                Phase = _progress.Phase,
+                Received = _progress.Received,
+                Total = _progress.Total,
+                Percent = _progress.Percent,
+                Error = _progress.Error,
+            };
+        }
+    }
 
-        quit();
+    private static void StartProgress(string phase, long total)
+    {
+        lock (ProgressLock)
+        {
+            _progress = new UpdateProgressDto
+            {
+                Active = true,
+                Phase = phase,
+                Total = total,
+                Received = 0,
+                Percent = 0,
+            };
+        }
+    }
+
+    private static void SetProgressPhase(string phase)
+    {
+        lock (ProgressLock)
+        {
+            _progress.Phase = phase;
+            _progress.Active = phase is "download" or "extract" or "install";
+            if (phase is "extract" or "install")
+            {
+                _progress.Percent = 100;
+                if (_progress.Total > 0) _progress.Received = _progress.Total;
+            }
+        }
+    }
+
+    private static void AdvanceProgress(long received, long total)
+    {
+        lock (ProgressLock)
+        {
+            _progress.Active = true;
+            _progress.Phase = "download";
+            _progress.Received = received;
+            _progress.Total = total;
+            _progress.Percent = total > 0 ? (int)Math.Min(100, received * 100 / total) : 0;
+        }
+    }
+
+    private static void FailProgress(string message)
+    {
+        lock (ProgressLock)
+        {
+            _progress.Active = false;
+            _progress.Phase = "error";
+            _progress.Error = message;
+        }
     }
 
     private static async Task DownloadAndStageAsync(string appDir, UpdateInfo info, CancellationToken ct)
@@ -396,7 +489,19 @@ internal static class Updater
 
                 await using var source = await res.Content.ReadAsStreamAsync(ct);
                 await using var target = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await source.CopyToAsync(target, ct);
+
+                long total = info.Size > 0 ? info.Size : (res.Content.Headers.ContentLength ?? 0);
+                AdvanceProgress(0, total);
+
+                byte[] buffer = new byte[81920];
+                long received = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, ct)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read), ct);
+                    received += read;
+                    AdvanceProgress(received, total);
+                }
             }
 
             var file = new FileInfo(zipPath);
@@ -411,6 +516,7 @@ internal static class Updater
             }
 
             using var zip = ZipFile.OpenRead(zipPath);
+            SetProgressPhase("extract");
             Extract(zip, ExeName, Path.Combine(appDir, "Kanban.update.exe"));
 
             // DLL необязательны: в старых релизах их могло не быть в архиве.

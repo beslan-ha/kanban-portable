@@ -936,6 +936,26 @@ body.font-large #btnFolder { display: none; }
 .overlay-box h2 { margin: 0 0 8px; font-size: 16px; }
 .overlay-box p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
+.upd-bar {
+  height: 8px;
+  margin: 16px 0 10px;
+  border-radius: 6px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+.upd-bar > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width .25s ease;
+}
+.upd-text {
+  font-variant-numeric: tabular-nums;
+  min-height: 18px;
+}
+
 @media (max-width: 720px) {
   .search { min-width: 0; }
   .search kbd { display: none; }
