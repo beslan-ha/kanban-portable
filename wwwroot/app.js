@@ -329,14 +329,22 @@ function renderCard(card, column) {
     const due = dueState(card.dueDate);
     const chip = document.createElement('span');
     chip.className = 'chip due' + (due.cls ? ' ' + due.cls : '');
-    chip.textContent = '⚑ ' + due.text;
-    chip.title = 'Срок: ' + due.full;
+
+    const flag = document.createElement('span');
+    flag.className = 'due-flag';
+    flag.textContent = '⚑';
+
+    const label = document.createElement('span');
+    label.textContent = due.withYear || due.text;
+
+    chip.append(flag, ' ', label);
+    chip.title = 'Срок: ' + due.full + (due.note ? ' (' + due.note + ')' : '');
     meta.appendChild(chip);
   }
 
   if (card.priority > 0) {
     const chip = document.createElement('span');
-    chip.className = 'chip';
+    chip.className = 'chip prio-' + card.priority;
     chip.textContent = PRIORITIES[card.priority];
     meta.appendChild(chip);
   }
@@ -750,12 +758,12 @@ function dueState(iso) {
 
   const diffDays = Math.round((date - today) / 86400000);
   const full = date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
-  const short = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  const withYear = date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  if (diffDays < 0) return { cls: 'overdue', text: short, full };
-  if (diffDays === 0) return { cls: 'soon', text: 'сегодня', full };
-  if (diffDays === 1) return { cls: 'soon', text: 'завтра', full };
-  return { cls: '', text: short, full };
+  if (diffDays < 0) return { cls: 'overdue', text: withYear, withYear, full, note: 'просрочено' };
+  if (diffDays === 0) return { cls: 'soon', text: withYear, withYear, full, note: 'сегодня' };
+  if (diffDays === 1) return { cls: 'soon', text: withYear, withYear, full, note: 'завтра' };
+  return { cls: '', text: withYear, withYear, full, note: '' };
 }
 
 function formatDate(iso) {
