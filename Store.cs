@@ -503,20 +503,19 @@ public sealed class Store
         using var c = Open();
         using var tx = c.BeginTransaction();
 
-        long sourceColumnId, boardId;
+        long sourceColumnId;
         using (var cmd = c.CreateCommand())
         {
             cmd.Transaction = tx;
-            cmd.CommandText = "SELECT column_id, board_id FROM cards WHERE id = $id;";
+            cmd.CommandText = "SELECT column_id FROM cards WHERE id = $id;";
             cmd.Parameters.AddWithValue("$id", cardId);
             using var r = cmd.ExecuteReader();
             if (!r.Read()) throw new AppException(404, "Карточка не найдена");
             sourceColumnId = r.GetInt64(0);
-            boardId = r.GetInt64(1);
         }
 
         long targetBoard = ScalarLong(c, tx, "SELECT board_id FROM board_columns WHERE id = $id;", ("$id", targetColumnId));
-        if (targetBoard != boardId) throw new AppException(400, "Колонка принадлежит другой доске");
+        if (targetBoard == 0) throw new AppException(404, "Колонка не найдена");
 
         if (sourceColumnId == targetColumnId)
         {
@@ -534,8 +533,10 @@ public sealed class Store
             using (var cmd = c.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "UPDATE cards SET column_id = $col, updated_at = $now WHERE id = $id;";
+                // Карточка может переехать в колонку другой доски — тогда меняем и board_id.
+                cmd.CommandText = "UPDATE cards SET column_id = $col, board_id = $board, updated_at = $now WHERE id = $id;";
                 cmd.Parameters.AddWithValue("$col", targetColumnId);
+                cmd.Parameters.AddWithValue("$board", targetBoard);
                 cmd.Parameters.AddWithValue("$now", Now());
                 cmd.Parameters.AddWithValue("$id", cardId);
                 cmd.ExecuteNonQuery();

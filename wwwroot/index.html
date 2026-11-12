@@ -71,18 +71,21 @@
 <main id="board" class="board" aria-label="Доска"></main>
 
 <footer class="statusbar">
-  <span id="statusText">загрузка…</span>
-  <span class="spacer"></span>
+  <div class="status-left"><span id="statusText">загрузка…</span></div>
+
   <div class="font-scale-box" role="group" aria-label="Размер интерфейса">
     <button id="btnFontMinus" class="font-btn" title="Уменьшить шрифт (Ctrl+-)">A−</button>
-    <span id="fontScale" class="font-scale" title="Масштаб интерфейса">100%</span>
+    <button id="fontScale" class="font-scale" type="button" title="Сбросить масштаб на 100% (Ctrl+0)">100%</button>
     <button id="btnFontPlus" class="font-btn" title="Увеличить шрифт (Ctrl++)">A+</button>
   </div>
-  <button id="btnBackup" class="link">Резервная копия</button>
-  <button id="btnFolder" class="link">Папка с данными</button>
-  <button id="btnSyncNow" class="link" title="Синхронизировать с сервером сейчас">Синхронизировать</button>
-  <span id="syncState" class="save-state"></span>
-  <span id="saveState" class="save-state" title="Состояние сохранения">—</span>
+
+  <div class="status-right">
+    <button id="btnBackup" class="link">Резервная копия</button>
+    <button id="btnFolder" class="link">Папка с данными</button>
+    <button id="btnSyncNow" class="link" title="Синхронизировать с сервером сейчас">Синхронизировать</button>
+    <span id="syncState" class="save-state"></span>
+    <span id="saveState" class="save-state" title="Состояние сохранения">—</span>
+  </div>
 </footer>
 
 <!-- контекстное меню -->
@@ -124,6 +127,11 @@
           <input id="fDue" type="date">
         </label>
       </div>
+
+      <label class="field">
+        <span>Колонка</span>
+        <select id="fColumn" title="Можно перенести карточку в колонку другой доски"></select>
+      </label>
 
       <label class="field tag-field">
         <span>Теги <em>(через запятую)</em></span>

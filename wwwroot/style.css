@@ -429,6 +429,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   position: fixed;
   z-index: 60;
   min-width: 230px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 11px;
@@ -594,10 +596,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- статусбар ---------- */
 .statusbar {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 6px 14px;
+  gap: 4px 12px;
   padding: 6px 16px;
   border-top: 1px solid var(--border);
   background: var(--bg-soft);
@@ -605,6 +607,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
   color: var(--muted);
   flex: none;
 }
+.status-left { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-right { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 14px; min-width: 0; }
 
 /* Крупный масштаб: убираем второстепенное, чтобы шапка оставалась в одну строку */
 body.font-large .brand-name { display: none; }
@@ -612,12 +616,18 @@ body.font-large .search kbd { display: none; }
 body.font-large .search { min-width: 110px; max-width: 170px; }
 body.font-large .topbar { gap: 6px 8px; padding: 8px 12px; }
 body.font-large .statusbar { gap: 4px 10px; padding: 6px 12px; }
-body.font-large #btnBackup,
-body.font-large #btnFolder { display: none; }
 .link { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 4px; border-radius: 5px; }
 .link:hover { color: var(--text); background: var(--panel-2); }
 
-.font-scale-box { display: inline-flex; align-items: center; gap: 2px; }
+.font-scale-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  background: var(--bg-soft);
+}
 .font-btn {
   border: 1px solid transparent;
   background: transparent;
@@ -632,7 +642,19 @@ body.font-large #btnFolder { display: none; }
 }
 .font-btn:hover:not(:disabled) { color: var(--text); background: var(--panel-2); border-color: var(--border-soft); }
 .font-btn:disabled { opacity: .35; cursor: default; }
-.font-scale { min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+.font-scale {
+  min-width: 42px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.font-scale:hover { color: var(--text); background: var(--panel-2); }
 .save-state { min-width: 74px; text-align: right; }
 .save-state.err { color: var(--danger); }
 .save-state.warn { color: var(--warn); }

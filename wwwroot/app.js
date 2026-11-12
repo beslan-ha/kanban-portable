@@ -941,6 +941,7 @@ function openCardDialog(card, column) {
   $('#fDesc').value = card ? card.description : '';
   $('#fPriority').value = String(card ? card.priority : 1);
   $('#fDue').value = card && card.dueDate ? card.dueDate : '';
+  fillColumnSelect(card ? card.columnId : (column ? column.id : null));
   $('#fTags').value = card ? card.tags : '';
   $('#tagSuggest').classList.add('hidden');
   $('#tagSuggest').innerHTML = '';
@@ -1180,6 +1181,34 @@ async function addFiles(fileList) {
   toast(files.length === 1 ? 'Файл добавлен' : `Добавлено файлов: ${files.length}`, 'ok');
 }
 
+/** Заполняет список колонок всех досок: карточку можно перенести на другую доску. */
+function fillColumnSelect(selectedId) {
+  const select = $('#fColumn');
+  if (!select) return;
+
+  select.innerHTML = '';
+
+  for (const board of state.boards) {
+    const columns = state.columns
+      .filter((column) => column.boardId === board.id)
+      .sort((a, b) => a.position - b.position || a.id - b.id);
+    if (!columns.length) continue;
+
+    const group = document.createElement('optgroup');
+    group.label = board.name;
+
+    for (const column of columns) {
+      const option = document.createElement('option');
+      option.value = String(column.id);
+      option.textContent = column.name;
+      if (column.id === selectedId) option.selected = true;
+      group.appendChild(option);
+    }
+
+    select.appendChild(group);
+  }
+}
+
 async function saveCard(event) {
   event.preventDefault();
   const payload = {
@@ -1191,12 +1220,19 @@ async function saveCard(event) {
   };
 
   const isNew = !editingCardId;
-  const ok = await mutate(
-    () => (isNew
-      ? api.createCard({ columnId: editingColumn.id, ...payload })
-      : api.updateCard(editingCardId, payload)),
-    isNew ? 'Карточка добавлена' : null,
-  );
+  const original = isNew ? null : openCard();
+  const targetColumnId = Number($('#fColumn').value) || (original ? original.columnId : editingColumn?.id);
+  const moved = !!original && targetColumnId !== original.columnId;
+
+  const ok = await mutate(async () => {
+    if (isNew) {
+      await api.createCard({ columnId: editingColumn.id, ...payload });
+      return;
+    }
+
+    await api.updateCard(editingCardId, payload);
+    if (moved) await api.moveCard(editingCardId, targetColumnId, 9999);
+  }, isNew ? 'Карточка добавлена' : (moved ? 'Карточка перемещена' : null));
 
   if (ok) $('#cardDialog').close();
 }
@@ -1318,11 +1354,22 @@ function showMenu(x, y, items) {
   menu.classList.remove('hidden');
   menu.style.left = '0px';
   menu.style.top = '0px';
+
+  // При масштабировании интерфейса координаты getBoundingClientRect уже умножены на zoom,
+  // а left/top задаются в CSS-пикселях. Поэтому переводим всё в CSS-пиксели.
+  const zoom = fontScale > 0 ? fontScale : 1;
+  const vw = document.documentElement.clientWidth / zoom;
+  const vh = document.documentElement.clientHeight / zoom;
+
+  menu.style.maxHeight = Math.max(160, vh - 16) + 'px';
   const rect = menu.getBoundingClientRect();
-  const left = Math.min(x, window.innerWidth - rect.width - 8);
-  const top = Math.min(y, window.innerHeight - rect.height - 8);
-  menu.style.left = Math.max(8, left) + 'px';
-  menu.style.top = Math.max(8, top) + 'px';
+  const width = rect.width / zoom;
+  const height = rect.height / zoom;
+
+  const left = Math.max(8, Math.min(x / zoom, vw - width - 8));
+  const top = Math.max(8, Math.min(y / zoom, vh - height - 8));
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
 }
 
 function hideMenu() {
@@ -2230,6 +2277,7 @@ function bindUi() {
   };
 
   $('#btnFontMinus').onclick = () => changeFontScale(-FONT_STEP);
+  $('#fontScale').onclick = resetFontScale;
   $('#btnFontPlus').onclick = () => changeFontScale(FONT_STEP);
 
   $('#btnFilters').onclick = (e) => {
