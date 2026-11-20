@@ -52,6 +52,7 @@ const api = {
   createBoard: (name) => request('POST', '/api/boards', { name }),
   updateBoard: (id, patch) => request('PATCH', `/api/boards/${id}`, patch),
   deleteBoard: (id) => request('DELETE', `/api/boards/${id}`),
+  reorderBoards: (ids) => request('POST', '/api/boards/reorder', { ids }),
 
   createColumn: (boardId, name) => request('POST', '/api/columns', { boardId, name }),
   updateColumn: (id, patch) => request('PATCH', `/api/columns/${id}`, patch),
@@ -163,20 +164,72 @@ function renderStatus() {
     (archived ? ` · в архиве: ${archived}` : '');
 }
 
+let dragBoardId = null;
+let boardDragMoved = false;
+
 function renderTabs() {
   const tabs = $('#boardTabs');
   tabs.innerHTML = '';
+
   for (const board of state.boards) {
     const b = document.createElement('button');
     b.className = 'tab' + (board.id === activeBoardId ? ' active' : '');
     b.textContent = board.name;
-    b.title = board.name;
+    b.title = board.name + ' — перетащите, чтобы изменить порядок';
+    b.draggable = true;
+    b.dataset.id = String(board.id);
+
     b.onclick = () => {
+      if (boardDragMoved) { boardDragMoved = false; return; }
       activeBoardId = board.id;
       localStorage.setItem('kanban.board', String(board.id));
       render();
     };
     b.ondblclick = () => renameBoard(board);
+
+    b.addEventListener('dragstart', (e) => {
+      dragBoardId = board.id;
+      boardDragMoved = false;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(board.id));
+      b.classList.add('dragging');
+    });
+
+    b.addEventListener('dragend', () => {
+      b.classList.remove('dragging');
+      dragBoardId = null;
+      $$('.tab.drop-target').forEach((tab) => tab.classList.remove('drop-target'));
+      setTimeout(() => { boardDragMoved = false; }, 60);
+    });
+
+    b.addEventListener('dragover', (e) => {
+      if (dragBoardId == null || dragBoardId === board.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      b.classList.add('drop-target');
+    });
+
+    b.addEventListener('dragleave', () => b.classList.remove('drop-target'));
+
+    b.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      b.classList.remove('drop-target');
+      if (dragBoardId == null || dragBoardId === board.id) return;
+
+      boardDragMoved = true;
+
+      const ids = state.boards.map((x) => x.id);
+      const from = ids.indexOf(dragBoardId);
+      const to = ids.indexOf(board.id);
+      if (from < 0 || to < 0) return;
+
+      ids.splice(from, 1);
+      ids.splice(to, 0, dragBoardId);
+      dragBoardId = null;
+
+      await mutate(() => api.reorderBoards(ids), 'Порядок досок сохранён');
+    });
+
     tabs.appendChild(b);
   }
 }
@@ -927,6 +980,7 @@ function openComposer(list, column) {
 
 let editingCardId = null;
 let editingColumn = null;
+let checklistDragIndex = null;
 
 function openCardDialog(card, column) {
   editingCardId = card ? card.id : null;
@@ -983,6 +1037,45 @@ function renderChecklist() {
   items.forEach((item, index) => {
     const li = document.createElement('li');
     li.className = 'check-item' + (item.done ? ' done' : '');
+    li.dataset.index = String(index);
+
+    const drag = document.createElement('span');
+    drag.className = 'check-drag';
+    drag.textContent = '⋮⋮';
+    drag.title = 'Перетащить пункт';
+    drag.draggable = true;
+    drag.addEventListener('dragstart', (e) => {
+      checklistDragIndex = index;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(index));
+      li.classList.add('dragging');
+    });
+    drag.addEventListener('dragend', () => {
+      li.classList.remove('dragging');
+      checklistDragIndex = null;
+      $$('.check-item.drop-target').forEach((node) => node.classList.remove('drop-target'));
+    });
+
+    li.addEventListener('dragover', (e) => {
+      if (checklistDragIndex == null || checklistDragIndex === index) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      li.classList.add('drop-target');
+    });
+    li.addEventListener('dragleave', () => li.classList.remove('drop-target'));
+    li.addEventListener('drop', (e) => {
+      e.preventDefault();
+      li.classList.remove('drop-target');
+      if (checklistDragIndex == null || checklistDragIndex === index) return;
+
+      const from = checklistDragIndex;
+      checklistDragIndex = null;
+
+      const next = items.map((x) => ({ text: x.text, done: !!x.done }));
+      const [moved] = next.splice(from, 1);
+      next.splice(index, 0, moved);
+      saveChecklist(next);
+    });
 
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -1009,6 +1102,22 @@ function renderChecklist() {
       saveChecklist(next);
     };
 
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.className = 'icon-btn check-move';
+    up.title = 'Переместить выше';
+    up.textContent = '↑';
+    up.disabled = index === 0;
+    up.onclick = () => moveChecklistItem(index, -1);
+
+    const down = document.createElement('button');
+    down.type = 'button';
+    down.className = 'icon-btn check-move';
+    down.title = 'Переместить ниже';
+    down.textContent = '↓';
+    down.disabled = index === items.length - 1;
+    down.onclick = () => moveChecklistItem(index, 1);
+
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'icon-btn';
@@ -1016,13 +1125,26 @@ function renderChecklist() {
     del.textContent = '✕';
     del.onclick = () => saveChecklist(items.filter((_, i) => i !== index).map((x) => ({ text: x.text, done: !!x.done })));
 
-    li.append(cb, text, del);
+    li.append(drag, cb, text, up, down, del);
     list.appendChild(li);
   });
 
   const total = items.length;
   const done = items.filter((i) => i.done).length;
   $('#checkProgress').textContent = total ? `${done}/${total}` : '';
+}
+
+async function moveChecklistItem(index, delta) {
+  const card = openCard();
+  if (!card) return;
+
+  const items = (card.checklist || []).map((x) => ({ text: x.text, done: !!x.done }));
+  const target = index + delta;
+  if (target < 0 || target >= items.length) return;
+
+  const [moved] = items.splice(index, 1);
+  items.splice(target, 0, moved);
+  await saveChecklist(items);
 }
 
 async function saveChecklist(items) {

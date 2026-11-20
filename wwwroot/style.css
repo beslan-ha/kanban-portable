@@ -93,6 +93,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .tab:hover { background: var(--panel-2); color: var(--text); }
 .tab.active { background: var(--accent-soft); border-color: rgba(79, 140, 255, .35); color: var(--text); font-weight: 600; }
+.tab.dragging { opacity: .45; }
+.tab.drop-target { border-color: var(--accent); background: var(--accent-soft); }
 
 .tab-add {
   border: 1px dashed var(--border);
@@ -846,6 +848,23 @@ body.font-large .statusbar { gap: 4px 10px; padding: 6px 12px; }
 .check-text:hover { border-color: var(--border-soft); }
 .check-text:focus { border-color: var(--accent); background: var(--panel-2); }
 .check-item.done .check-text { text-decoration: line-through; color: var(--muted); }
+
+.check-drag {
+  flex: none;
+  padding: 0 1px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -1px;
+  opacity: .65;
+  cursor: grab;
+  user-select: none;
+}
+.check-drag:active { cursor: grabbing; }
+.check-item.dragging { opacity: .45; }
+.check-item.drop-target { outline: 1px dashed var(--accent); outline-offset: -1px; }
+.check-move { font-size: 12px; }
+.icon-btn:disabled { opacity: .3; cursor: default; }
 
 .icon-btn {
   border: 0;

@@ -121,6 +121,12 @@ public static class Api
             return Results.NoContent();
         }));
 
+        app.MapPost("/api/boards/reorder", (ReorderReq req) => Guard(() =>
+        {
+            store.ReorderBoards(req.Ids);
+            return Results.NoContent();
+        }));
+
         // ---- колонки ----
         app.MapPost("/api/columns", (CreateColumnReq req) => Guard(() =>
             Results.Json(store.CreateColumn(req.BoardId, req.Name))));

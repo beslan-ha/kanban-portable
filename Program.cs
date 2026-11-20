@@ -17,7 +17,7 @@ namespace Kanban;
 
 internal static class Program
 {
-    public const string AppVersion = "1.3.5";
+    public const string AppVersion = "1.3.6";
 
 #if NOSYNC
     /// <summary>Издание: от него зависит, какой архив скачивать с GitHub.</summary>

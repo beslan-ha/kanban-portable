@@ -394,6 +394,25 @@ public sealed class Store
         DeleteFiles(files);
     }
 
+    public void ReorderBoards(long[] ids)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+
+        int position = 0;
+        foreach (long id in ids)
+        {
+            using var cmd = c.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "UPDATE boards SET position = $p WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$p", position++);
+            cmd.Parameters.AddWithValue("$id", id);
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+
     public void ReorderColumns(long boardId, long[] ids)
     {
         using var c = Open();
